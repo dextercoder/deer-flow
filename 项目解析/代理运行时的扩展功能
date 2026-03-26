@@ -1,0 +1,26 @@
+代理运行时的扩展功能并不是通过与网关交互来实现的，而是直接集成到代理系统中的。以下是具体实现方式：
+
+## 扩展功能的实现机制
+
+### 1. 工具加载机制
+代理运行时通过 `get_available_tools()` 函数直接加载多种扩展工具：
+- **MCP 工具**：从启用的 MCP 服务器加载（延迟初始化，通过 mtime 缓存失效）
+- **技能**：从 `deer-flow/skills/{public,custom}/` 目录加载
+- **社区工具**：如 tavily（网络搜索）、jina_ai（网页获取）、firecrawl（网页抓取）等
+- **ACP 代理工具**：从 `config.yaml` 配置的外部 ACP 兼容代理
+
+### 2. 扩展功能的管理
+网关 API 提供了管理扩展功能的接口，但代理运行时使用这些功能时是直接加载的：
+- **MCP 配置**：`PUT /api/mcp/config` 更新配置并保存到 `extensions_config.json`
+- **技能管理**：`PUT /api/skills/{name}` 更新技能启用状态
+- **技能安装**：`POST /api/skills/install` 从 .skill 归档安装到 custom/ 目录
+
+### 3. 运行时集成
+- **MCP 系统**：使用 `langchain-mcp-adapters` 的 `MultiServerMCPClient` 管理多服务器
+- **技能系统**：通过 `load_skills()` 递归扫描技能目录，解析元数据
+- **社区工具**：作为 `deerflow.community` 模块的一部分直接集成
+- **配置更新**：LangGraph 服务器通过 mtime 检测配置文件变化，自动重新加载
+
+
+
+而代理运行时则直接使用这些扩展功能，不需要通过网关交互来调用它们。这种设计使得代理系统更加高效，同时通过网关提供了统一的管理界面。

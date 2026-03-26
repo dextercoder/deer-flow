@@ -1,0 +1,171 @@
+    
+# DeerFlow 项目解读
+
+## 项目概述
+
+DeerFlow 是一个基于 LangGraph 的 AI 超级代理系统，采用全栈架构设计。后端提供了一个"超级代理"，具备以下核心能力：
+- 沙箱执行环境
+- 持久化内存
+- 子代理委派
+- 可扩展工具集成
+- 线程隔离环境运行
+
+## 系统架构
+
+### 服务组件
+- **LangGraph 服务器**（端口 2024）：代理运行时和工作流执行
+- **网关 API**（端口 8001）：REST API，提供模型、MCP、技能、内存、工件、上传各种配置的管理
+- **前端**（端口 3000）：Next.js Web 界面
+- **Nginx**（端口 2026）：统一反向代理入口点
+- **供应者**（端口 8002，Docker 开发中可选）：仅在沙箱配置为供应者/Kubernetes 模式时启动
+
+### 项目结构
+
+项目采用清晰的分层结构：
+- **backend/**：后端应用
+  - **packages/harness/**：可发布的代理框架包 (`deerflow-harness`)
+  - **app/**：未发布的应用代码，包含 FastAPI 网关 API 和 IM 通道集成
+- **frontend/**：Next.js 前端应用
+- **skills/**：代理技能目录
+
+## 核心系统
+
+### 1. 代理系统
+
+**Lead Agent** 是系统的核心，负责：
+- 动态模型选择
+- 工具加载
+- 系统提示生成
+
+**ThreadState** 扩展了 `AgentState`，添加了沙箱、线程数据、标题、工件、待办事项、上传文件和查看图像等功能。
+
+### 2. 中间件链
+
+系统实现了 12 个中间件，按严格顺序执行：
+1. **ThreadDataMiddleware**：创建线程目录
+2. **UploadsMiddleware**：跟踪和注入上传文件
+3. **SandboxMiddleware**：获取沙箱
+4. **DanglingToolCallMiddleware**：处理未响应的工具调用
+5. **GuardrailMiddleware**：工具调用授权
+6. **SummarizationMiddleware**：上下文缩减
+7. **TodoListMiddleware**：任务跟踪
+8. **TitleMiddleware**：自动生成线程标题
+9. **MemoryMiddleware**：异步内存更新队列
+10. **ViewImageMiddleware**：注入图像数据
+11. **SubagentLimitMiddleware**：限制并发子代理
+12. **ClarificationMiddleware**：处理澄清请求
+
+### 3. 沙箱系统
+
+提供安全的执行环境：
+- 抽象 `Sandbox` 接口
+- 提供者模式：`SandboxProvider`
+- 实现：`LocalSandboxProvider` 和 `AioSandboxProvider`
+- 虚拟路径系统：将代理视角的路径映射到物理路径
+- 沙箱工具：bash、ls、read_file、write_file、str_replace
+
+### 4. 子代理系统
+
+支持任务委派：
+- 内置代理：`general-purpose` 和 `bash`
+- 双线程池执行：调度池 + 执行池
+- 并发限制：最多 3 个并发子代理
+- 事件系统：任务开始、运行、完成/失败/超时
+
+### 5. 工具系统
+
+**`get_available_tools()`** 组装多种工具：
+- 配置定义的工具
+- MCP 工具
+- 内置工具：present_files、ask_clarification、view_image
+- 子代理工具：task
+- 社区工具：tavily、jina_ai、firecrawl、image_search、aio_sandbox
+- ACP 代理工具：invoke_acp_agent
+
+### 6. 内存系统
+
+实现智能记忆管理：
+- 基于 LLM 的内存更新，包括事实提取和去重
+- 防抖更新队列
+- 数据结构：用户上下文、历史、事实
+- 工作流：消息过滤 → 队列 → 后台线程处理 → 原子更新 → 提示注入
+
+### 7. 配置系统
+
+**主配置** (`config.yaml`)：
+- 配置版本控制
+- 配置缓存
+- 配置优先级
+- 环境变量解析
+
+**扩展配置** (`extensions_config.json`)：
+- MCP 服务器和技能配置
+
+### 8. 嵌入式客户端
+
+`DeerFlowClient` 提供直接的进程内访问，无需 HTTP 服务：
+- 代理对话：chat() 和 stream() 方法
+- 网关等效方法：模型、MCP、技能、内存、上传、工件
+- 与网关 API 响应模式一致
+
+## 开发工作流
+
+### 测试驱动开发 (TDD)
+- 每个新功能或 bug 修复都必须伴随单元测试
+- 测试文件位于 `backend/tests/`
+- 运行测试：`make test`
+
+### 运行方式
+
+**完整应用**（从项目根目录）：
+```bash
+make dev  # 启动所有服务，访问 http://localhost:2026
+```
+
+**后端服务**（从 backend 目录）：
+```bash
+# 终端 1: LangGraph 服务器
+make dev
+
+# 终端 2: 网关 API
+make gateway
+```
+
+## 关键特性
+
+1. **文件上传**：支持多文件上传，自动文档转换（PDF、PPT、Excel、Word）
+2. **计划模式**：TodoList 中间件，用于复杂的多步骤任务
+3. **上下文摘要**：当接近令牌限制时自动进行对话摘要
+4. **视觉支持**：为支持视觉的模型提供图像处理
+
+## 技术栈与代码风格
+
+- **Python 3.12+** 带类型提示
+- **Ruff** 用于 linting 和格式化
+- **行长度**：240 字符
+- **代码风格**：双引号，空格缩进
+
+## 文档
+
+项目提供了详细的文档，位于 `docs/` 目录：
+- CONFIGURATION.md：配置选项
+- ARCHITECTURE.md：架构详情
+- API.md：API 参考
+- SETUP.md：设置指南
+- FILE_UPLOAD.md：文件上传功能
+- PATH_EXAMPLES.md：路径类型和使用
+- summarization.md：上下文摘要
+- plan_mode_usage.md：计划模式与 TodoList
+
+## 总结
+
+DeerFlow 是一个功能强大、架构清晰的 AI 超级代理系统，采用模块化设计，提供了丰富的功能和工具。其核心优势在于：
+
+1. **模块化架构**：清晰的 Harness/App 分离，严格的依赖方向
+2. **强大的代理能力**：沙箱执行、子代理委派、工具集成
+3. **智能内存管理**：基于 LLM 的记忆更新和事实提取
+4. **灵活的配置系统**：版本控制、缓存、环境变量支持
+5. **完善的开发工具链**：测试驱动开发、linting、格式化
+6. **丰富的集成**：Web 界面、IM 通道、MCP 服务器
+
+DeerFlow 展示了如何构建一个功能完整的 AI 代理系统，结合了现代软件工程实践和 AI 技术，为开发者提供了一个强大的框架来构建和部署 AI 代理应用。
